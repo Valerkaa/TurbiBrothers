@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+
+  backend:
+    build: .
+    volumes:
+      - .:/backend
+    container_name: backend
+    hostname: backend
+    depends_on:
+      - nest-db
+    ports:
+      - '3001:3001'
+    expose:
+      - '3001'
+    restart: unless-stopped
+    env_file: ./.env
+    networks:
+      - nest
+
+  nest-db:
+    image: postgres:15.2-alpine3.17
+    container_name: nest-db
+    hostname: nest-db
+    env_file: .db.env
+    volumes:
+      - ./volumes/db:/var/lib/postgresql/data
+    expose:
+      - '5432'
+    ports:
+      - '5432:5432'
+    restart: always
+    networks:
+      - nest
+
+  nest-pgadmin:
+    container_name: nest-pgadmin
+    hostname: nest-pgadmin
+    volumes:
+      - ./volumes/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - nest-db
+    image: dpage/pgadmin4
+    env_file: .pgadmin.env
+    expose:
+      - '80'
+    ports:
+      - '5051:80'
+    restart: always
+    networks:
+      - nest
+    logging:
+      driver: none
+
+networks:
+  nest:
+    external: true
