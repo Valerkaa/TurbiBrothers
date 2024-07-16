@@ -1,5 +1,6 @@
 # compiled output
 backend/dist
+backend/volumes
 backend/node_modules
 backend/build
 frontend/node_modules
