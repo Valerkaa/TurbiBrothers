@@ -4,10 +4,12 @@ services:
 
   frontend:
     container_name: frontend
-    build: ./
+    build: .
     volumes:
-      - './:/app'
+      - .:/frontend
+      - /frontend/node_modules
     ports:
       - 3000:3000
-    stdin_open: true
-    command: npm start
+    hostname: frontend
+    restart: unless-stopped
+    env_file: .env
