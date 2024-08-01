@@ -1,57 +1,100 @@
-import {  HttpService } from '@nestjs/axios';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
-import {Injectable} from "@nestjs/common";
-
-interface FlightData {
-    flight: {
-        iata: string;
-    };
-    departure: {
-        airport: string;
-        latitude: number;
-        longitude: number;
-    };
-    arrival: {
-        airport: string;
-        latitude: number;
-        longitude: number;
-    };
-    flight_status: string;
-}
-
-interface FlightApiResponse {
-    data: FlightData[];
-}
+import {HttpService} from "@nestjs/axios";
 
 @Injectable()
 export class FlightsService {
-    constructor(
-        private readonly httpService: HttpService,
-        private readonly configService: ConfigService,
-    ) {}
+    private aviationstackApiKey: string;
+    private weatherApiKey: string;
 
-    async getFlightInfo(flightId: string): Promise<FlightApiResponse> {
-        const apiKey = this.configService.get('AVIATIONSTACK_API_KEY');
-        const response = await firstValueFrom(
-            this.httpService.get<FlightApiResponse>(`http://api.aviationstack.com/v1/flights?access_key=${apiKey}&flight_iata=${flightId}`),
-        );
-        return response.data;
+    constructor(private readonly httpService: HttpService, private readonly configService: ConfigService) {
+        this.aviationstackApiKey = this.configService.get<string>('AVIATIONSTACK_API_KEY');
+        this.weatherApiKey = this.configService.get<string>('OPENWEATHERMAP_API_KEY');
     }
 
-    async generateTurbulenceMap(flightData: FlightApiResponse): Promise<string> {
-        const mapboxApiKey = this.configService.get('MAPBOX_API_KEY');
-        const flight = flightData.data[0];
-        const coordinates = `${flight.departure.latitude},${flight.departure.longitude};${flight.arrival.latitude},${flight.arrival.longitude}`;
-        const response = await firstValueFrom(
-            this.httpService.get(`https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/path-5+f44-0.5(${coordinates})/auto/600x600?access_token=${mapboxApiKey}`),
-        );
-        return response.config.url;
+    private getAviationStackHeaders() {
+        return {
+            'Access-Key': this.aviationstackApiKey,
+        };
     }
 
-    async getTurbulenceMap(flightId: string): Promise<{ flightData: FlightData[]; mapUrl: string }> {
-        const flightData = await this.getFlightInfo(flightId);
-        const mapUrl = await this.generateTurbulenceMap(flightData);
-        return { flightData: flightData.data, mapUrl };
+    async getFlightData(flightId: string): Promise<any> {
+        const url = `http://api.aviationstack.com/v1/flights?flight_iata=${flightId}&access_key=${this.aviationstackApiKey}`;
+
+        try {
+            const response = await this.httpService.get(url).toPromise();
+            const flights = response.data.data;
+
+            if (flights.length === 0) {
+                throw new Error('Flight not found');
+            }
+
+            // Фильтруем только предстоящие рейсы
+            const upcomingFlights = flights.filter(flight => new Date(flight.departure.estimated) > new Date());
+
+            if (upcomingFlights.length === 0) {
+                throw new Error('No upcoming flights found');
+            }
+
+            return upcomingFlights[0];
+        } catch (error) {
+            throw new InternalServerErrorException('Failed to fetch flight data');
+        }
+    }
+
+    async getAirportCoordinates(iataCode: string): Promise<{ latitude: number, longitude: number }> {
+        // Здесь используем бесплатный сервис для получения координат аэропорта
+        // Пример использования: https://geocode.xyz/
+        const url = `https://geocode.xyz/${iataCode}?json=1`;
+
+        try {
+            const response = await this.httpService.get(url).toPromise();
+            const airport = response.data;
+
+            if (!airport) {
+                throw new Error('Airport coordinates not found');
+            }
+
+            return {
+                latitude: parseFloat(airport.latt),
+                longitude: parseFloat(airport.longt),
+            };
+        } catch (error) {
+            throw new InternalServerErrorException('Failed to fetch airport coordinates');
+        }
+    }
+
+    async getWeatherData(latitude: number, longitude: number): Promise<any> {
+        const url = `http://api.openweathermap.org/data/2.5/weather?lat=${latitude}&lon=${longitude}&appid=${this.weatherApiKey}`;
+
+        try {
+            const response = await this.httpService.get(url).toPromise();
+            return response.data;
+        } catch (error) {
+            throw new InternalServerErrorException('Failed to fetch weather data');
+        }
+    }
+
+    async getTurbulenceMap(flightId: string): Promise<any> {
+        const flightData = await this.getFlightData(flightId);
+
+        const departureAirportCode = flightData.departure.iata;
+        const arrivalAirportCode = flightData.arrival.iata;
+
+        const departureCoords = await this.getAirportCoordinates(departureAirportCode);
+        const arrivalCoords = await this.getAirportCoordinates(arrivalAirportCode);
+
+        const departureWeather = await this.getWeatherData(departureCoords.latitude, departureCoords.longitude);
+        const arrivalWeather = await this.getWeatherData(arrivalCoords.latitude, arrivalCoords.longitude);
+
+        // Генерируем URL карты турбулентности
+        const mapUrl = `http://example.com/turbulence-map?dep_lat=${departureCoords.latitude}&dep_lon=${departureCoords.longitude}&arr_lat=${arrivalCoords.latitude}&arr_lon=${arrivalCoords.longitude}`;
+
+        return {
+            flightData,
+            departureWeather,
+            arrivalWeather,
+            mapUrl,
+        };
     }
 }
